@@ -9,10 +9,13 @@ import {
     Eye,
     Menu,
     X,
+    CheckCircle,
 } from "lucide-react";
 import Editor from "@monaco-editor/react";
 import axios from "axios";
 import { BACKEND_URL } from "../config/config";
+import { Step } from "../types";
+import { parseXmltoSteps } from "../utils/steps";
 
 interface FileStructure {
     name: string;
@@ -20,148 +23,219 @@ interface FileStructure {
     content?: string;
     children?: FileStructure[];
     isOpen?: boolean;
+    path?: string;
+}
+
+interface LocationState {
+    prompt: string;
 }
 
 type Tab = "code" | "preview";
+type StepStatus = "pending" | "in-progress" | "completed";
+
+interface FileExplorerProps {
+    items: FileStructure[];
+    level?: number;
+    onFileSelect: (fileName: string) => void;
+    selectedFile: string | null;
+    onFolderToggle: (item: FileStructure) => void;
+}
+
+const FileExplorer: React.FC<FileExplorerProps> = ({
+    items,
+    level = 0,
+    onFileSelect,
+    selectedFile,
+    onFolderToggle,
+}) => (
+    <div style={{ paddingLeft: level ? "1.5rem" : "0" }}>
+        {items.map((item) => (
+            <div key={item.name}>
+                <div
+                    className={`flex items-center py-1 px-2 hover:bg-gray-700/50 cursor-pointer ${
+                        selectedFile === item.name ? "bg-gray-700/50" : ""
+                    }`}
+                    onClick={() => {
+                        if (item.type === "file") {
+                            onFileSelect(item.name);
+                        } else {
+                            onFolderToggle(item);
+                        }
+                    }}
+                >
+                    {item.type === "folder" ? (
+                        <>
+                            {item.isOpen ? (
+                                <ChevronDown className="w-4 h-4 mr-1 text-gray-400" />
+                            ) : (
+                                <ChevronRight className="w-4 h-4 mr-1 text-gray-400" />
+                            )}
+                            <Folder className="w-4 h-4 mr-2 text-indigo-400" />
+                        </>
+                    ) : (
+                        <File className="w-4 h-4 mr-2 text-gray-400" />
+                    )}
+                    <span className="text-gray-200 text-sm">{item.name}</span>
+                </div>
+                {item.type === "folder" && item.isOpen && item.children && (
+                    <FileExplorer
+                        items={item.children}
+                        level={level + 1}
+                        onFileSelect={onFileSelect}
+                        selectedFile={selectedFile}
+                        onFolderToggle={onFolderToggle}
+                    />
+                )}
+            </div>
+        ))}
+    </div>
+);
 
 export default function BuilderPage() {
     const location = useLocation();
-    const { prompt: UserPrompt } = location.state as { prompt: string };
+    const { prompt: userPrompt } = (location.state as LocationState) || {
+        prompt: "",
+    };
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<Tab>("code");
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isFileExplorerOpen, setIsFileExplorerOpen] = useState(true);
-    const [fileStructure, setFileStructure] = useState<FileStructure[]>([
-        {
-            name: "src",
-            type: "folder",
-            isOpen: true,
-            children: [
-                {
-                    name: "App.tsx",
-                    type: "file",
-                    content: "// Your App code here",
-                },
-                {
-                    name: "components",
-                    type: "folder",
-                    isOpen: false,
-                    children: [],
-                },
-            ],
-        },
-        {
-            name: "package.json",
-            type: "file",
-            content: '{\n  "name": "my-project"\n}',
-        },
-    ]);
-    const [steps, setSteps] = useState([{}]);
+    const [fileStructure, setFileStructure] = useState<FileStructure[]>([]);
+    const [steps, setSteps] = useState<(Step & { status: StepStatus })[]>([]);
 
-    const FileExplorer = ({
-        items,
-        level = 0,
-    }: {
-        items: FileStructure[];
-        level?: number;
-    }) => {
-        return (
-            <div style={{ paddingLeft: level ? "1.5rem" : "0" }}>
-                {items.map((item) => (
-                    <div key={item.name}>
-                        <div
-                            className={`flex items-center py-1 px-2 hover:bg-gray-700/50 cursor-pointer ${
-                                selectedFile === item.name
-                                    ? "bg-gray-700/50"
-                                    : ""
-                            }`}
-                            onClick={() => {
-                                if (item.type === "file") {
-                                    setSelectedFile(item.name);
-                                    if (window.innerWidth < 768) {
-                                        setIsFileExplorerOpen(false);
-                                    }
-                                } else {
-                                    const updateStructure = (
-                                        items: FileStructure[]
-                                    ): FileStructure[] => {
-                                        return items.map((i) => {
-                                            if (i === item) {
-                                                return {
-                                                    ...i,
-                                                    isOpen: !i.isOpen,
-                                                };
-                                            }
-                                            if (i.children) {
-                                                return {
-                                                    ...i,
-                                                    children: updateStructure(
-                                                        i.children
-                                                    ),
-                                                };
-                                            }
-                                            return i;
-                                        });
-                                    };
-                                    setFileStructure(
-                                        updateStructure(fileStructure)
-                                    );
-                                }
-                            }}
-                        >
-                            {item.type === "folder" ? (
-                                <>
-                                    {item.isOpen ? (
-                                        <ChevronDown className="w-4 h-4 mr-1 text-gray-400" />
-                                    ) : (
-                                        <ChevronRight className="w-4 h-4 mr-1 text-gray-400" />
-                                    )}
-                                    <Folder className="w-4 h-4 mr-2 text-indigo-400" />
-                                </>
-                            ) : (
-                                <File className="w-4 h-4 mr-2 text-gray-400" />
-                            )}
-                            <span className="text-gray-200 text-sm">
-                                {item.name}
-                            </span>
-                        </div>
-                        {item.type === "folder" &&
-                            item.isOpen &&
-                            item.children && (
-                                <FileExplorer
-                                    items={item.children}
-                                    level={level + 1}
-                                />
-                            )}
-                    </div>
-                ))}
-            </div>
-        );
+    const handleFileSelect = (fileName: string) => {
+        setSelectedFile(fileName);
+        if (window.innerWidth < 768) {
+            setIsFileExplorerOpen(false);
+        }
     };
 
-
-    async function init() {
-        const response = await axios.post(`${BACKEND_URL}/template`, {
-            prompt,
+    const handleFolderToggle = (item: FileStructure) => {
+        setFileStructure((prevStructure) => {
+            const updateStructure = (
+                items: FileStructure[]
+            ): FileStructure[] => {
+                return items.map((i) => {
+                    if (i.name === item.name) {
+                        return { ...i, isOpen: !i.isOpen };
+                    }
+                    if (i.children) {
+                        return { ...i, children: updateStructure(i.children) };
+                    }
+                    return i;
+                });
+            };
+            return updateStructure(prevStructure);
         });
+    };
 
-        const { prompts, uiPrompts } = response.data;
+    const insertFolderFile = (
+        name: string,
+        structure: FileStructure[],
+        pathParts: string[],
+        pendingStep?: Step
+    ): void => {
+        if (pathParts.length === 1) {
+            structure.push({
+                name,
+                type: "file",
+                content: pendingStep?.code,
+                isOpen: true,
+            });
+            setSteps((prev) => [
+                { ...prev[0], status: "completed" },
+                ...prev.slice(1),
+            ]);
+            return;
+        }
 
-        const stepsResponse = await axios.post(`${BACKEND_URL}/chat`, {
-            messages: [...prompts, UserPrompt].map((content) => ({
-                role: "user",
-                parts: [
-                    {
-                        text: content,
-                    },
-                ],
-            })),
-        });
-    }
+        let folder = structure.find((f) => f.name === name);
+        if (!folder) {
+            folder = {
+                name,
+                type: "folder",
+                children: [],
+                isOpen: true,
+            };
+            structure.push(folder);
+        }
+
+        pathParts.shift();
+        if (folder.children) {
+            insertFolderFile(
+                pathParts[0],
+                folder.children,
+                pathParts,
+                pendingStep
+            );
+        }
+    };
 
     useEffect(() => {
-        init();
-    }, []);
+        const pendingStep = steps.find((step) => step.status === "pending");
+        if (!pendingStep?.path) {
+            setSteps((prev) => [
+                { ...prev[0], status: "completed" },
+                ...prev.slice(1),
+            ]);
+            return;
+        }
+
+        const pathParts = pendingStep.path.split("/");
+        const newStructure = [...fileStructure];
+        pendingStep.status = "in-progress";
+        insertFolderFile(pathParts[0], newStructure, pathParts, pendingStep);
+        setFileStructure(newStructure);
+    }, [steps]);
+
+    const init = async () => {
+        try {
+            const response = await axios.post(`${BACKEND_URL}/template`, {
+                prompt: userPrompt,
+            });
+
+            const { prompts, uiPrompts } = response.data;
+            const parsedSteps = parseXmltoSteps(uiPrompts).map((step) => ({
+                ...step,
+                status: "pending" as StepStatus,
+            }));
+            setSteps(parsedSteps);
+
+            await axios.post(`${BACKEND_URL}/chat`, {
+                messages: [...prompts, userPrompt].map((content) => ({
+                    role: "user",
+                    parts: [{ text: content }],
+                })),
+            });
+        } catch (error) {
+            console.error("Failed to initialize:", error);
+            // Handle error appropriately
+        }
+    };
+
+    useEffect(() => {
+        if (userPrompt) {
+            init();
+        }
+    }, [userPrompt]);
+
+    const getSelectedFileContent = () => {
+        const findFileContent = (
+            items: FileStructure[]
+        ): string | undefined => {
+            for (const item of items) {
+                if (item.name === selectedFile) {
+                    return item.content;
+                }
+                if (item.children) {
+                    const content = findFileContent(item.children);
+                    if (content) return content;
+                }
+            }
+            return undefined;
+        };
+        return findFileContent(fileStructure) || "// Select a file to edit";
+    };
 
     return (
         <div className="h-screen flex flex-col md:flex-row bg-gray-900 text-gray-100">
@@ -216,18 +290,21 @@ export default function BuilderPage() {
                         </button>
                     </div>
                     <div className="p-4 space-y-2">
-                        <div className="p-2 bg-indigo-900/50 text-indigo-300 rounded border border-indigo-800/50">
-                            1. Initialize Project
-                        </div>
-                        <div className="p-2 bg-gray-800/50 rounded border border-gray-700/50">
-                            2. Create Components
-                        </div>
-                        <div className="p-2 bg-gray-800/50 rounded border border-gray-700/50">
-                            3. Add Styling
-                        </div>
-                        <div className="p-2 bg-gray-800/50 rounded border border-gray-700/50">
-                            4. Configure Routes
-                        </div>
+                        {steps.map((step, index) => (
+                            <div
+                                key={index}
+                                className="p-2 bg-gray-800/50 rounded border border-gray-700/50 flex items-center gap-2"
+                            >
+                                {step.status === "pending" ? (
+                                    "🟡"
+                                ) : step.status === "in-progress" ? (
+                                    "🟢"
+                                ) : (
+                                    <CheckCircle className="w-4 h-4 text-green-500" />
+                                )}
+                                <span>{step.title}</span>
+                            </div>
+                        ))}
                     </div>
                 </div>
             </div>
@@ -274,7 +351,12 @@ export default function BuilderPage() {
                                     <h3 className="text-sm font-semibold mb-4 text-gray-300">
                                         File Explorer
                                     </h3>
-                                    <FileExplorer items={fileStructure} />
+                                    <FileExplorer
+                                        items={fileStructure}
+                                        onFileSelect={handleFileSelect}
+                                        selectedFile={selectedFile}
+                                        onFolderToggle={handleFolderToggle}
+                                    />
                                 </div>
                             </div>
 
@@ -285,17 +367,11 @@ export default function BuilderPage() {
                                         height="100%"
                                         defaultLanguage="typescript"
                                         theme="vs-dark"
-                                        value={
-                                            fileStructure.find(
-                                                (f) => f.name === selectedFile
-                                            )?.content ||
-                                            "// Select a file to edit"
-                                        }
+                                        value={getSelectedFileContent()}
                                         options={{
                                             minimap: { enabled: false },
                                             fontSize: 14,
                                             wordWrap: "on",
-                                            theme: "vs-dark",
                                         }}
                                     />
                                 ) : (
