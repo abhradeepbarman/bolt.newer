@@ -15,7 +15,6 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY!);
 const model = genAI.getGenerativeModel({
     model: "gemini-1.5-flash",
-    systemInstruction: getSystemPrompt(),
 });
 
 app.use(express.json());
@@ -74,6 +73,31 @@ app.post("/template", async (req: Request, res: Response): Promise<void> => {
             });
             return;
         }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "An error occurred" });
+    }
+});
+
+app.post("/chat", async (req: Request, res: Response) => {
+    const messages = req.body.messages;
+
+    try {
+        const result = await model.generateContentStream({
+            contents: messages,
+            systemInstruction: getSystemPrompt(),
+            generationConfig: {
+                maxOutputTokens: 8000,
+                temperature: 0,
+            },
+        });
+
+        for await (const chunk of result.stream) {
+            const chunkText = chunk.text();
+            process.stdout.write(chunkText);
+        }
+
+        // res.json({});
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "An error occurred" });
