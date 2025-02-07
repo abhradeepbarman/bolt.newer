@@ -1,20 +1,20 @@
-import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
-import {
-    ChevronRight,
-    ChevronDown,
-    File,
-    Folder,
-    Code,
-    Eye,
-    Menu,
-    X,
-    CheckCircle,
-} from "lucide-react";
 import Editor from "@monaco-editor/react";
 import axios from "axios";
+import {
+    CheckCircle,
+    ChevronDown,
+    ChevronRight,
+    Code,
+    Eye,
+    File,
+    Folder,
+    Menu,
+    X,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { BACKEND_URL } from "../config/config";
-import { Step } from "../types";
+import { Step, StepType } from "../types";
 import { parseXmltoSteps } from "../utils/steps";
 
 interface FileStructure {
@@ -129,85 +129,155 @@ export default function BuilderPage() {
         });
     };
 
-    const insertFolderFile = (
-        path: string[],
-        structure: FileStructure[],
-        content: string
-    ): FileStructure[] => {
-        if (path.length === 0) return structure;
+    // const insertFolderFile = (
+    //     path: string[],
+    //     structure: FileStructure[],
+    //     content: string
+    // ): FileStructure[] => {
+    //     if (path.length === 0) return structure;
 
-        const currentPath = path[0];
-        const remainingPath = path.slice(1);
+    //     const currentPath = path[0];
+    //     const remainingPath = path.slice(1);
 
-        let folder = structure.find((f) => f.name === currentPath);
+    //     let folder = structure.find((f) => f.name === currentPath);
 
-        if (!folder) {
-            if (remainingPath.length > 0) {
-                // Create a new folder
-                folder = {
-                    name: currentPath,
-                    type: "folder",
-                    children: [],
-                    isOpen: true,
-                };
-                structure.push(folder);
-            } else {
-                // Create a new file
-                structure.push({
-                    name: currentPath,
-                    type: "file",
-                    content,
-                });
-                return structure;
-            }
-        }
+    //     if (!folder) {
+    //         if (remainingPath.length > 0) {
+    //             // Create a new folder
+    //             folder = {
+    //                 name: currentPath,
+    //                 type: "folder",
+    //                 children: [],
+    //                 isOpen: true,
+    //             };
+    //             structure.push(folder);
+    //         } else {
+    //             // Create a new file
+    //             structure.push({
+    //                 name: currentPath,
+    //                 type: "file",
+    //                 content,
+    //             });
+    //             return structure;
+    //         }
+    //     }
 
-        if (folder.type === "folder" && remainingPath.length > 0) {
-            folder.children = insertFolderFile(
-                remainingPath,
-                folder.children || [],
-                content
-            );
-        }
+    //     if (folder.type === "folder" && remainingPath.length > 0) {
+    //         folder.children = insertFolderFile(
+    //             remainingPath,
+    //             folder.children || [],
+    //             content
+    //         );
+    //     }
 
-        return structure;
-    };
+    //     return structure;
+    // };
+
+    // useEffect(() => {
+    //     if (!steps || steps.length === 0) return;
+
+    //     setSteps((prevSteps) => {
+    //         const updatedSteps = [...prevSteps];
+    //         const pendingStepIndex = updatedSteps.findIndex(
+    //             (step) => step.status === "pending"
+    //         );
+
+    //         if (pendingStepIndex === -1) return prevSteps; // No pending steps, exit
+
+    //         const pendingStep = updatedSteps[pendingStepIndex];
+
+    //         if (!pendingStep.path) {
+    //             updatedSteps[pendingStepIndex].status = "completed";
+    //             return updatedSteps;
+    //         }
+
+    //         updatedSteps[pendingStepIndex].status = "in-progress";
+
+    //         const pathParts = pendingStep.path.split("/");
+    //         setFileStructure((prevStructure) => {
+    //             const newFileStructure = [...prevStructure];
+    //             insertFolderFile(
+    //                 pathParts,
+    //                 newFileStructure,
+    //                 pendingStep?.code || ""
+    //             );
+    //             return newFileStructure;
+    //         });
+
+    //         updatedSteps[pendingStepIndex].status = "completed";
+    //         return updatedSteps;
+    //     });
+    // }, [steps]); // Only run when `steps` changes
 
     useEffect(() => {
-        if (!steps || steps.length === 0) return;
+        let originalFiles = [...fileStructure];
+        let updateHappened = false;
+        steps
+            .filter(({ status }) => status === "pending")
+            .map((step) => {
+                updateHappened = true;
+                if (step?.type === StepType.CreateFile) {
+                    let parsedPath = step.path?.split("/") ?? []; // ["src", "components", "App.tsx"]
+                    let currentFileStructure = [...originalFiles]; // {}
+                    const finalAnswerRef = currentFileStructure;
 
-        setSteps((prevSteps) => {
-            const updatedSteps = [...prevSteps];
-            const pendingStepIndex = updatedSteps.findIndex(
-                (step) => step.status === "pending"
-            );
+                    let currentFolder = "";
+                    while (parsedPath.length) {
+                        currentFolder = `${currentFolder}/${parsedPath[0]}`;
+                        const currentFolderName = parsedPath[0];
+                        parsedPath = parsedPath.slice(1);
 
-            if (pendingStepIndex === -1) return prevSteps; // No pending steps, exit
+                        if (!parsedPath.length) {
+                            // final file
+                            const file = currentFileStructure.find(
+                                (x) => x.path === currentFolder
+                            );
+                            if (!file) {
+                                currentFileStructure.push({
+                                    name: currentFolderName,
+                                    type: "file",
+                                    path: currentFolder,
+                                    content: step.code,
+                                });
+                            } else {
+                                file.content = step.code;
+                            }
+                        } else {
+                            /// in a folder
+                            const folder = currentFileStructure.find(
+                                (x) => x.path === currentFolder
+                            );
+                            if (!folder) {
+                                // create the folder
+                                currentFileStructure.push({
+                                    name: currentFolderName,
+                                    type: "folder",
+                                    path: currentFolder,
+                                    children: [],
+                                });
+                            }
 
-            const pendingStep = updatedSteps[pendingStepIndex];
-
-            if (!pendingStep.path) {
-                updatedSteps[pendingStepIndex].status = "completed";
-                return updatedSteps;
-            }
-
-            updatedSteps[pendingStepIndex].status = "in-progress";
-
-            const pathParts = pendingStep.path.split("/");
-            setFileStructure((prevStructure) => {
-                const newFileStructure = [...prevStructure];
-                insertFolderFile(
-                    pathParts,
-                    newFileStructure,
-                    pendingStep?.code || ""
-                );
-                return newFileStructure;
+                            currentFileStructure = currentFileStructure.find(
+                                (x) => x.path === currentFolder
+                            )!.children!;
+                        }
+                    }
+                    originalFiles = finalAnswerRef;
+                }
             });
 
-            updatedSteps[pendingStepIndex].status = "completed";
-            return updatedSteps;
-        });
-    }, [steps]); // Only run when `steps` changes
+        if (updateHappened) {
+            setFileStructure(originalFiles);
+            setSteps((steps) =>
+                steps.map((s: Step) => {
+                    return {
+                        ...s,
+                        status: "completed",
+                    };
+                })
+            );
+        }
+    }, [steps, fileStructure]);
 
     const init = async () => {
         try {
@@ -220,15 +290,22 @@ export default function BuilderPage() {
                 ...step,
                 status: "pending" as StepStatus,
             }));
-            console.log(parsedSteps);
             setSteps(parsedSteps);
 
-            // await axios.post(`${BACKEND_URL}/chat`, {
-            //     messages: [...prompts, userPrompt].map((content) => ({
-            //         role: "user",
-            //         parts: [{ text: content }],
-            //     })),
-            // });
+            const stepsResponse = await axios.post(`${BACKEND_URL}/chat`, {
+                messages: [...prompts, userPrompt].map((content) => ({
+                    role: "user",
+                    parts: [{ text: content }],
+                })),
+            });
+
+            setSteps((s) => [
+                ...s,
+                ...parseXmltoSteps(stepsResponse.data.artifect).map((x) => ({
+                    ...x,
+                    status: "pending" as StepStatus,
+                })),
+            ]);
         } catch (error) {
             console.error("Failed to initialize:", error);
         }
@@ -298,7 +375,7 @@ export default function BuilderPage() {
                     isSidebarOpen ? "translate-x-0" : "-translate-x-full"
                 } md:translate-x-0 transition-transform duration-200 ease-in-out`}
             >
-                <div className="h-full w-64 bg-gray-800/50 border-r border-gray-700 overflow-y-auto">
+                <div className="h-full w-80 bg-gray-800/50 border-r border-gray-700 overflow-y-auto">
                     <div className="flex justify-between items-center p-4 md:hidden">
                         <h2 className="text-lg font-semibold text-gray-100">
                             Build Steps
