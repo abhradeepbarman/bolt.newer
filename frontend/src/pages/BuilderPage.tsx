@@ -101,7 +101,7 @@ export default function BuilderPage() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isFileExplorerOpen, setIsFileExplorerOpen] = useState(true);
     const [fileStructure, setFileStructure] = useState<FileStructure[]>([]);
-    const [steps, setSteps] = useState<(Step & { status: StepStatus })[]>([]);
+    const [steps, setSteps] = useState<Step[]>([]);
 
     const handleFileSelect = (fileName: string) => {
         setSelectedFile(fileName);
@@ -130,63 +130,84 @@ export default function BuilderPage() {
     };
 
     const insertFolderFile = (
-        name: string,
+        path: string[],
         structure: FileStructure[],
-        pathParts: string[],
-        pendingStep?: Step
-    ): void => {
-        if (pathParts.length === 1) {
-            structure.push({
-                name,
-                type: "file",
-                content: pendingStep?.code,
-                isOpen: true,
-            });
-            setSteps((prev) => [
-                { ...prev[0], status: "completed" },
-                ...prev.slice(1),
-            ]);
-            return;
-        }
+        content: string
+    ): FileStructure[] => {
+        if (path.length === 0) return structure;
 
-        let folder = structure.find((f) => f.name === name);
+        const currentPath = path[0];
+        const remainingPath = path.slice(1);
+
+        let folder = structure.find((f) => f.name === currentPath);
+
         if (!folder) {
-            folder = {
-                name,
-                type: "folder",
-                children: [],
-                isOpen: true,
-            };
-            structure.push(folder);
+            if (remainingPath.length > 0) {
+                // Create a new folder
+                folder = {
+                    name: currentPath,
+                    type: "folder",
+                    children: [],
+                    isOpen: true,
+                };
+                structure.push(folder);
+            } else {
+                // Create a new file
+                structure.push({
+                    name: currentPath,
+                    type: "file",
+                    content,
+                });
+                return structure;
+            }
         }
 
-        pathParts.shift();
-        if (folder.children) {
-            insertFolderFile(
-                pathParts[0],
-                folder.children,
-                pathParts,
-                pendingStep
+        if (folder.type === "folder" && remainingPath.length > 0) {
+            folder.children = insertFolderFile(
+                remainingPath,
+                folder.children || [],
+                content
             );
         }
+
+        return structure;
     };
 
     useEffect(() => {
-        const pendingStep = steps.find((step) => step.status === "pending");
-        if (!pendingStep?.path) {
-            setSteps((prev) => [
-                { ...prev[0], status: "completed" },
-                ...prev.slice(1),
-            ]);
-            return;
-        }
+        if (!steps || steps.length === 0) return;
 
-        const pathParts = pendingStep.path.split("/");
-        const newStructure = [...fileStructure];
-        pendingStep.status = "in-progress";
-        insertFolderFile(pathParts[0], newStructure, pathParts, pendingStep);
-        setFileStructure(newStructure);
-    }, [steps]);
+        setSteps((prevSteps) => {
+            const updatedSteps = [...prevSteps];
+            const pendingStepIndex = updatedSteps.findIndex(
+                (step) => step.status === "pending"
+            );
+
+            if (pendingStepIndex === -1) return prevSteps; // No pending steps, exit
+
+            const pendingStep = updatedSteps[pendingStepIndex];
+
+            if (!pendingStep.path) {
+                updatedSteps[pendingStepIndex].status = "completed";
+                return updatedSteps;
+            }
+
+            updatedSteps[pendingStepIndex].status = "in-progress";
+
+            const pathParts = pendingStep.path.split("/");
+            setFileStructure((prevStructure) => {
+                const newFileStructure = [...prevStructure];
+                insertFolderFile(
+                    pathParts,
+                    newFileStructure,
+                    pendingStep?.code || ""
+                );
+                return newFileStructure;
+            });
+
+            updatedSteps[pendingStepIndex].status = "completed";
+            return updatedSteps;
+        });
+    }, [steps]); // Only run when `steps` changes
 
     const init = async () => {
         try {
@@ -199,17 +220,17 @@ export default function BuilderPage() {
                 ...step,
                 status: "pending" as StepStatus,
             }));
+            console.log(parsedSteps);
             setSteps(parsedSteps);
 
-            await axios.post(`${BACKEND_URL}/chat`, {
-                messages: [...prompts, userPrompt].map((content) => ({
-                    role: "user",
-                    parts: [{ text: content }],
-                })),
-            });
+            // await axios.post(`${BACKEND_URL}/chat`, {
+            //     messages: [...prompts, userPrompt].map((content) => ({
+            //         role: "user",
+            //         parts: [{ text: content }],
+            //     })),
+            // });
         } catch (error) {
             console.error("Failed to initialize:", error);
-            // Handle error appropriately
         }
     };
 
