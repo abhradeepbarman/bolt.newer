@@ -16,6 +16,7 @@ import { useLocation } from "react-router-dom";
 import { BACKEND_URL } from "../config/config";
 import { Step, StepType } from "../types";
 import { parseXmltoSteps } from "../utils/steps";
+import { useWebContainer } from "../hooks/useWebContainer";
 
 interface FileStructure {
     name: string;
@@ -39,6 +40,17 @@ interface FileExplorerProps {
     onFileSelect: (fileName: string) => void;
     selectedFile: string | null;
     onFolderToggle: (item: FileStructure) => void;
+}
+
+interface MountStructure {
+    [key: string]: {
+        directory?: {
+            [key: string]: any;
+        };
+        file?: {
+            contents: string;
+        };
+    };
 }
 
 const FileExplorer: React.FC<FileExplorerProps> = ({
@@ -92,6 +104,8 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
 );
 
 export default function BuilderPage() {
+    const webcontainer = useWebContainer();
+
     const location = useLocation();
     const { prompt: userPrompt } = (location.state as LocationState) || {
         prompt: "",
@@ -102,6 +116,7 @@ export default function BuilderPage() {
     const [isFileExplorerOpen, setIsFileExplorerOpen] = useState(true);
     const [fileStructure, setFileStructure] = useState<FileStructure[]>([]);
     const [steps, setSteps] = useState<Step[]>([]);
+    const [url, setUrl] = useState("");
 
     const handleFileSelect = (fileName: string) => {
         setSelectedFile(fileName);
@@ -129,85 +144,46 @@ export default function BuilderPage() {
         });
     };
 
-    // const insertFolderFile = (
-    //     path: string[],
-    //     structure: FileStructure[],
-    //     content: string
-    // ): FileStructure[] => {
-    //     if (path.length === 0) return structure;
+    async function startDevServer() {
+        if (!webcontainer) return;
 
-    //     const currentPath = path[0];
-    //     const remainingPath = path.slice(1);
+        try {
+            console.log("Starting dev server...");
 
-    //     let folder = structure.find((f) => f.name === currentPath);
+            // First, install dependencies
+            console.log("Installing dependencies...");
+            const installProcess = await webcontainer.spawn("npm", ["install"]);
+            const installExitCode = await installProcess.exit;
 
-    //     if (!folder) {
-    //         if (remainingPath.length > 0) {
-    //             // Create a new folder
-    //             folder = {
-    //                 name: currentPath,
-    //                 type: "folder",
-    //                 children: [],
-    //                 isOpen: true,
-    //             };
-    //             structure.push(folder);
-    //         } else {
-    //             // Create a new file
-    //             structure.push({
-    //                 name: currentPath,
-    //                 type: "file",
-    //                 content,
-    //             });
-    //             return structure;
-    //         }
-    //     }
+            if (installExitCode !== 0) {
+                throw new Error("Failed to install dependencies");
+            }
 
-    //     if (folder.type === "folder" && remainingPath.length > 0) {
-    //         folder.children = insertFolderFile(
-    //             remainingPath,
-    //             folder.children || [],
-    //             content
-    //         );
-    //     }
+            // Start the dev server
+            console.log("Starting server...");
+            const devProcess = await webcontainer.spawn("npm", ["run", "dev"]);
 
-    //     return structure;
-    // };
+            // Listen for server output to detect when it's ready
+            devProcess.output.pipeTo(
+                new WritableStream({
+                    write(data) {
+                        if (data.includes("Local:")) {
+                            console.log("Server is ready!");
+                        }
+                    },
+                })
+            );
 
-    // useEffect(() => {
-    //     if (!steps || steps.length === 0) return;
-
-    //     setSteps((prevSteps) => {
-    //         const updatedSteps = [...prevSteps];
-    //         const pendingStepIndex = updatedSteps.findIndex(
-    //             (step) => step.status === "pending"
-    //         );
-
-    //         if (pendingStepIndex === -1) return prevSteps; // No pending steps, exit
-
-    //         const pendingStep = updatedSteps[pendingStepIndex];
-
-    //         if (!pendingStep.path) {
-    //             updatedSteps[pendingStepIndex].status = "completed";
-    //             return updatedSteps;
-    //         }
-
-    //         updatedSteps[pendingStepIndex].status = "in-progress";
-
-    //         const pathParts = pendingStep.path.split("/");
-    //         setFileStructure((prevStructure) => {
-    //             const newFileStructure = [...prevStructure];
-    //             insertFolderFile(
-    //                 pathParts,
-    //                 newFileStructure,
-    //                 pendingStep?.code || ""
-    //             );
-    //             return newFileStructure;
-    //         });
-
-    //         updatedSteps[pendingStepIndex].status = "completed";
-    //         return updatedSteps;
-    //     });
-    // }, [steps]); // Only run when `steps` changes
+            // Listen for server-ready event
+            webcontainer.on("server-ready", (port, serverUrl) => {
+                console.log("Server ready at:", serverUrl);
+                setUrl(serverUrl);
+            });
+        } catch (error) {
+            console.error("Failed to start dev server:", error);
+            // Add error handling UI if needed
+        }
+    }
 
     useEffect(() => {
         let originalFiles = [...fileStructure];
@@ -311,6 +287,62 @@ export default function BuilderPage() {
         }
     };
 
+    const convertToMountStructure = (
+        files: FileStructure[]
+    ): MountStructure => {
+        const result: MountStructure = {};
+
+        const processFile = (
+            file: FileStructure,
+            parentPath: string = ""
+        ): MountStructure => {
+            const currentPath = parentPath
+                ? `${parentPath}/${file.name}`
+                : file.name;
+
+            if (file.type === "folder") {
+                const directoryContent: MountStructure = {};
+
+                file.children?.forEach((child) => {
+                    const childResult = processFile(child, currentPath);
+                    Object.assign(directoryContent, childResult);
+                });
+
+                return {
+                    [file.name]: {
+                        directory: directoryContent,
+                    },
+                };
+            } else {
+                return {
+                    [file.name]: {
+                        file: {
+                            contents: file.content || "",
+                        },
+                    },
+                };
+            }
+        };
+
+        files.forEach((file) => {
+            const processed = processFile(file);
+            Object.assign(result, processed);
+        });
+
+        return result;
+    };
+
+    const mountFolderToWebContainer = async (mountStructure) => {
+        await webcontainer?.mount(mountStructure);
+    };
+
+    useEffect(() => {
+        const originalFiles = [...fileStructure];
+        const mountStructure = convertToMountStructure(originalFiles);
+        console.log("mount structure", mountStructure);
+        mountFolderToWebContainer(mountStructure);
+    }, [fileStructure]);
+
     useEffect(() => {
         if (userPrompt) {
             init();
@@ -362,7 +394,9 @@ export default function BuilderPage() {
                                 ? "bg-indigo-900/50 text-indigo-400"
                                 : "text-gray-400"
                         }`}
-                        onClick={() => setActiveTab("preview")}
+                        onClick={() => {
+                            setActiveTab("preview");
+                        }}
                     >
                         <Eye className="w-4 h-4" />
                     </button>
@@ -428,7 +462,10 @@ export default function BuilderPage() {
                                 ? "border-indigo-500 text-indigo-400"
                                 : "border-transparent text-gray-400 hover:text-gray-300"
                         }`}
-                        onClick={() => setActiveTab("preview")}
+                        onClick={() => {
+                            setActiveTab("preview");
+                            startDevServer();
+                        }}
                     >
                         <Eye className="w-4 h-4 mr-2" />
                         Preview
@@ -500,7 +537,7 @@ export default function BuilderPage() {
                             <iframe
                                 title="Website Preview"
                                 className="w-full h-full border-none"
-                                src="/preview"
+                                src={url}
                             />
                         </div>
                     )}
