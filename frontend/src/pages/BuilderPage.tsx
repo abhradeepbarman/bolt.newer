@@ -110,6 +110,7 @@ export default function BuilderPage() {
     const { prompt: userPrompt } = (location.state as LocationState) || {
         prompt: "",
     };
+    const [updatePrompt, setUpdatePrompt] = useState("");
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<Tab>("code");
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -117,6 +118,9 @@ export default function BuilderPage() {
     const [fileStructure, setFileStructure] = useState<FileStructure[]>([]);
     const [steps, setSteps] = useState<Step[]>([]);
     const [url, setUrl] = useState("");
+    const [llmMessages, setLLMMessages] = useState<
+        { role: "user" | "assistant"; parts: { text: string }[] }[]
+    >([]);
 
     const handleFileSelect = (fileName: string) => {
         setSelectedFile(fileName);
@@ -275,6 +279,21 @@ export default function BuilderPage() {
                 })),
             });
 
+            setLLMMessages(
+                [...prompts, userPrompt].map((content) => ({
+                    role: "user",
+                    parts: [{ text: content }],
+                }))
+            );
+
+            setLLMMessages((x) => [
+                ...x,
+                {
+                    role: "assistant",
+                    parts: [{ text: stepsResponse.data.artifect }],
+                },
+            ]);
+
             setSteps((s) => [
                 ...s,
                 ...parseXmltoSteps(stepsResponse.data.artifect).map((x) => ({
@@ -421,7 +440,7 @@ export default function BuilderPage() {
                             <X className="w-5 h-5 text-gray-400" />
                         </button>
                     </div>
-                    <div className="p-4 space-y-2">
+                    <div className="p-4 space-y-2 mb-40">
                         {steps.map((step, index) => (
                             <div
                                 key={index}
@@ -437,6 +456,49 @@ export default function BuilderPage() {
                                 <span>{step.title}</span>
                             </div>
                         ))}
+                    </div>
+                    <div className="fixed bottom-0 w-full">
+                        <div className="flex">
+                            <textarea
+                                className="w-full py-5 text-black"
+                                onChange={(e) =>
+                                    setUpdatePrompt(e.target.value)
+                                }
+                                placeholder="Enter your prompt here"
+                                value={updatePrompt}
+                            />
+                            <button
+                                className="bg-purple-400 px-5 "
+                                onClick={async () => {
+                                    const newMessage = {
+                                        role: "user",
+                                        parts: [{ text: updatePrompt }],
+                                    };
+                                    const stepsUpdateResponse =
+                                        await axios.post(
+                                            `${BACKEND_URL}/chat`,
+                                            {
+                                                messages: [
+                                                    ...llmMessages,
+                                                    newMessage,
+                                                ],
+                                            }
+                                        );
+
+                                    setSteps((s) => [
+                                        ...s,
+                                        ...parseXmltoSteps(
+                                            stepsUpdateResponse.data.artifect
+                                        ).map((x) => ({
+                                            ...x,
+                                            status: "pending" as StepStatus,
+                                        })),
+                                    ]);
+                                }}
+                            >
+                                Send
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
